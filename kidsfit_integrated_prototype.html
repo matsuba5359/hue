@@ -422,6 +422,13 @@ const setStatus=t=>$("status").textContent=t;
 const state={ personImg:null, poseLandmarks:null, skinLab:null, garments:[], sort:"pop", compareIds:[], chosenId:null };
 let seq=0, currentItems=[], purchaseUrl="";
 
+/* 楽天は「中継サーバー(Cloudflare Worker)」経由で呼びます。
+   ここに Worker の URL を入れると、誰が開いても入力不要で常時リアル検索になります。 */
+var RELAY_URL = "https://hue-rakuten.dahuisonglin9.workers.dev";
+/* （旧・未使用）applicationId を直接使う場合のフォールバック用 */
+var DEFAULT_APP_ID = "";
+var DEFAULT_AFF_ID = "";
+
 /* ---------- ライブラリ ---------- */
 let cvReady=false,poseReady=false,meshReady=false;
 function ready(){ if(cvReady&&poseReady&&meshReady){ setStatus("準備完了。写真と服を選んでください。"); refreshBuild(); } }
@@ -630,9 +637,18 @@ const MOCK=[
   {name:"キッズ 半袖Tシャツ 無地（ピンク）",price:1250,img:swatchDataURL("#e59ab0"),url:"https://item.rakuten.co.jp/example/pink/"},
   {name:"キッズ 半袖Tシャツ 無地（チャコール）",price:1420,img:swatchDataURL("#3b3b3b"),url:"https://item.rakuten.co.jp/example/charcoal/"},
 ];
-function rakutenSearch(o){
-  const appId=$("appId").value.trim(),affId=$("affId").value.trim(),enc=encodeURIComponent;
-  if(!appId){ const items=MOCK.slice(); return Promise.resolve({mock:true,items,count:items.length,page:1,pageCount:1}); }
+async function rakutenSearch(o){
+  const enc=encodeURIComponent;
+  if(RELAY_URL){
+    const qp=new URLSearchParams({keyword:o.keyword,hits:String(o.hits),page:String(o.page),sort:o.sort});
+    if(o.genreId)qp.set("genreId",o.genreId); if(o.minPrice)qp.set("minPrice",o.minPrice); if(o.maxPrice)qp.set("maxPrice",o.maxPrice);
+    let d; try{ const r=await fetch(RELAY_URL+"?"+qp.toString()); d=await r.json(); }catch(e){ throw new Error("接続できませんでした"); }
+    if(d && d.errors){ throw new Error(d.errors.errorMessage||"楽天エラー"); }
+    const items=(d.Items||[]).map(w=>{const it=w.Item||w; return {name:it.itemName,price:it.itemPrice,img:(it.mediumImageUrls&&it.mediumImageUrls[0]&&(it.mediumImageUrls[0].imageUrl||it.mediumImageUrls[0]))||"",url:it.affiliateUrl||it.itemUrl,shop:it.shopName||"",review:it.reviewCount||0,rate:it.reviewAverage||0};});
+    return {mock:false,items,count:d.count||items.length,page:d.page||o.page,pageCount:d.pageCount||1};
+  }
+  const appId=$("appId").value.trim(),affId=$("affId").value.trim();
+  if(!appId){ const items=MOCK.slice(); return {mock:true,items,count:items.length,page:1,pageCount:1}; }
   return new Promise((res,rej)=>{ const cb="rk_"+Date.now()+"_"+Math.floor(Math.random()*1e4);
     const timer=setTimeout(()=>{cleanup();rej(new Error("応答がありませんでした（applicationIdや通信をご確認ください）"));},12000);
     function cleanup(){clearTimeout(timer);try{delete window[cb];}catch(e){window[cb]=undefined;}if(s.parentNode)s.remove();}
@@ -696,18 +712,21 @@ function renderShop(){ if(!currentItems.length){$("grid").innerHTML=`<div class=
     const tag=it.score!=null?`<span class="tag">${pop?"映える色":"候補"}</span><div class="impr">${impression(it.score,it.garLab)}</div>`:`<div class="impr">お子さまの写真を選ぶと映える色の目安が出ます</div>`;
     const shop=it.shop?`<div class="shop">${esc(it.shop)}</div>`:"";
     const rev=(it.review)?`<div class="rev">★${Number(it.rate).toFixed(2)}（${Number(it.review).toLocaleString()}件）</div>`:"";
-    const pr=affId?`<div class="pr">PR：このリンクから購入すると当サービスに紹介料が入ります（アフィリエイト広告）。</div>`:`<div class="pr">applicationId のみで表示中。affiliateId を設定するとアフィリンク＋PR表記になります。</div>`;
+    const pr=(RELAY_URL||affId)?`<div class="pr">PR：このリンクから購入すると当サービスに紹介料が入ります（アフィリエイト広告）。</div>`:`<div class="pr">applicationId のみで表示中。affiliateId を設定するとアフィリンク＋PR表記になります。</div>`;
     el.innerHTML=`<img class="thumb" src="${it.img}" alt="" referrerpolicy="no-referrer"><div class="body"><div class="name">${esc(it.name)}</div>${shop}<div class="price">¥${Number(it.price).toLocaleString()}</div>${rev}${tag}<div class="foot">${pr}<button class="buy">楽天で見る（外部）</button></div></div>`;
     el.querySelector(".buy").onclick=()=>openPurchase(it.url); grid.appendChild(el);
   });
 }
 
 /* applicationId / affiliateId をこの端末に保存（楽天との紐づけ） */
-function updateConnState(){ const a=($("appId").value||"").trim(),el=$("connState"); if(!el)return;
+function updateConnState(){ const el=$("connState"); if(!el)return; const a=RELAY_URL||($("appId").value||"").trim();
   el.className="connState "+(a?"on":"off");
-  el.textContent = a ? "● 楽天と接続済み：実データで検索します" : "○ 未接続：デモ表示中。下の「楽天と紐づける」で applicationId を登録してください。"; }
+  el.textContent = a ? "● 楽天と接続済み：実データで検索します" : "○ 未接続：デモ表示中。"; }
 function saveKeys(){ try{ localStorage.setItem("kf_appId",($("appId").value||"").trim()); localStorage.setItem("kf_affId",($("affId").value||"").trim()); }catch(e){} updateConnState(); }
-function loadKeys(){ try{ const a=localStorage.getItem("kf_appId"),b=localStorage.getItem("kf_affId"); if(a)$("appId").value=a; if(b)$("affId").value=b; }catch(e){} updateConnState(); }
+function loadKeys(){ try{ const a=localStorage.getItem("kf_appId"),b=localStorage.getItem("kf_affId"); if(a)$("appId").value=a; if(b)$("affId").value=b; }catch(e){}
+  if(!$("appId").value && DEFAULT_APP_ID) $("appId").value=DEFAULT_APP_ID;
+  if(!$("affId").value && DEFAULT_AFF_ID) $("affId").value=DEFAULT_AFF_ID;
+  updateConnState(); }
 $("appId").addEventListener("change",saveKeys); $("affId").addEventListener("change",saveKeys);
 loadKeys();
 
