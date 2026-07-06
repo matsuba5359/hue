@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F4ECE1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="hue">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="hue_icons/hue_icon_180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="hue_icons/hue_icon_167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="hue_icons/hue_icon_152.png">
+<link rel="icon" type="image/png" sizes="32x32" href="hue_icons/hue_icon_32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="hue_icons/hue_icon_16.png">
+<title>hue — この子に映える色を</title>
+<!--
+  統合版：フェーズ1〜4を一本の動線に。フェーズ5の白系フォールバック/文言も反映。
+  ・準備 → 見比べる(2×2) → 迷い中 → 2枚比較 → 決定 → 楽天で探す → 保護者ゲート → PR → 外部遷移
+  原則1 機械は提案し親が決める／原則2・6 端末内処理・非保存・非送信／原則3 断定しない／原則4 購入は保護者ゲート内
+  分離設計：試着はユーザーの服画像。楽天画像は無加工表示（切り抜き・合成しない）。
+-->
+<script async src="https://docs.opencv.org/4.10.0/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+<style>
+  :root{--bg:#faf7f2;--card:#fff;--ink:#33302c;--sub:#8a837a;--line:#e7e1d8;--accent:#c98a5e;--pop:#d9b48a;--heart:#d05a6e;--ok:#3f8f5b;--warn:#b06a3b;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;}
+  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;gap:10px;}
+  header .back{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;visibility:hidden;}
+  header h1{font-size:15px;margin:0;flex:1;}
+  .badge{background:#fbeef0;color:var(--heart);border:1px solid #f2d6dc;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;}
+  .flow{display:flex;gap:4px;padding:6px 14px;background:#fdf9f3;border-bottom:1px solid var(--line);font-size:10px;color:var(--sub);flex-wrap:wrap;}
+  .flow span{padding:2px 6px;border-radius:6px;}
+  .flow span.cur{background:var(--accent);color:#fff;}
+  .privacy{font-size:11px;color:var(--sub);padding:6px 14px;background:#fdf9f3;border-bottom:1px solid var(--line);}
+  .privacy::before{content:"🔒 ";}
+  main{max-width:1040px;margin:0 auto;padding:16px;}
+  .view{display:none;} .view.active{display:block;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  h2{font-size:14px;margin:0 0 10px;}
+  .field{margin-bottom:12px;} label{display:block;font-size:12px;color:var(--sub);margin-bottom:5px;}
+  input[type=file]{font-size:12px;} input[type=text]{width:100%;font-size:12px;padding:6px;border:1px solid var(--line);border-radius:7px;}
+  .skin{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:8px 0;}
+  .swatch{width:22px;height:22px;border-radius:6px;border:1px solid var(--line);background:#eee;}
+  button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  .status{font-size:12px;color:var(--sub);margin-top:8px;min-height:18px;}
+  .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+  .lbl{font-size:12px;color:var(--sub);}
+  select{font-size:12px;padding:6px;border:1px solid var(--line);border-radius:7px;background:#fff;}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+  @media(max-width:620px){.grid2{grid-template-columns:1fr;}}
+  .tile{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;}
+  .tile.pop{border-color:var(--pop);box-shadow:0 0 0 2px #f3e6d3;}
+  .tile canvas{width:100%;display:block;background:#f0ece4;}
+  .tile .cap{padding:10px;display:flex;flex-direction:column;gap:4px;}
+  .tile .nm{font-size:12px;font-weight:600;} .tile .impr{font-size:12px;color:var(--sub);}
+  .tile .warnnote{font-size:11px;color:var(--warn);}
+  .tag{align-self:flex-start;font-size:11px;padding:2px 8px;border-radius:999px;background:#f6ecdf;color:#9c6b3e;}
+  .heart{position:absolute;top:8px;right:8px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.9);font-size:18px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.15);}
+  .heart.on{color:var(--heart);}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  .shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+  .empty{color:var(--sub);font-size:13px;text-align:center;padding:40px;background:var(--card);border:1px dashed var(--line);border-radius:12px;}
+  .chk{position:absolute;top:8px;left:8px;transform:scale(1.3);}
+  .cmpbar{position:sticky;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:10px;align-items:center;margin-top:14px;border-radius:0 0 12px 12px;}
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;} @media(max-width:620px){.compare{grid-template-columns:1fr;}}
+  .cpcard{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  .cpcard canvas{width:100%;display:block;background:#f0ece4;}
+  .cpcard .cap{padding:12px;text-align:center;display:flex;flex-direction:column;gap:8px;}
+  .decided{background:#eef7ef;border:1px solid #cfe6d2;color:#356b3f;border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+  .prod{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;display:flex;flex-direction:column;}
+  .prod.pop{border-color:var(--pop);box-shadow:0 0 0 2px #f3e6d3;}
+  .prod .thumb{width:100%;aspect-ratio:1/1;object-fit:contain;background:#fff;}
+  .prod .body{padding:10px;display:flex;flex-direction:column;gap:6px;flex:1;}
+  .prod .name{font-size:12px;max-height:3.4em;overflow:hidden;} .prod .price{font-size:14px;font-weight:700;}
+  .impr{font-size:11px;color:var(--sub);} .prod .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;}
+  .pr{font-size:10px;color:var(--sub);background:#fbf6ef;border:1px solid #f0e4d3;border-radius:6px;padding:4px 6px;}
+  .buy{border:none;background:var(--accent);color:#fff;border-radius:7px;padding:7px;font-size:12px;cursor:pointer;}
+  .note{font-size:11px;color:var(--sub);background:#fdf6ee;border:1px solid #f0e4d3;border-radius:8px;padding:8px 10px;margin-top:12px;}
+  /* モーダル */
+  .overlay{position:fixed;inset:0;background:rgba(40,36,32,.45);display:none;align-items:center;justify-content:center;padding:18px;z-index:10;}
+  .overlay.on{display:flex;}
+  .modal{background:var(--card);border-radius:16px;max-width:440px;width:100%;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.2);}
+  .modal h2{font-size:16px;margin:0 0 6px;} .modal p{font-size:13px;color:var(--sub);margin:6px 0;}
+  .steps{display:flex;gap:6px;margin-bottom:12px;} .step{flex:1;height:5px;border-radius:3px;background:var(--line);} .step.on{background:var(--accent);}
+  .gatebox{background:#f7f3ec;border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center;margin:14px 0;}
+  .calc{font-size:26px;font-weight:700;} .gate-input{font-size:22px;text-align:center;width:120px;padding:8px;border:2px solid var(--line);border-radius:10px;margin-top:10px;}
+  .msg{font-size:13px;min-height:20px;margin-top:6px;} .msg.warn{color:var(--warn);} .msg.ok{color:var(--ok);}
+  .prbox{background:#fbf6ef;border:1px solid #f0e4d3;border-radius:12px;padding:14px;margin:14px 0;font-size:13px;}
+  .prtag{display:inline-block;font-size:11px;font-weight:700;color:#fff;background:var(--warn);border-radius:6px;padding:2px 8px;margin-bottom:6px;}
+  .dest{word-break:break-all;font-size:12px;color:var(--sub);background:#f4f0ea;border-radius:8px;padding:8px;margin-top:8px;}
+  .modal button{width:100%;margin-top:8px;} .close{background:none;border:none;color:var(--sub);font-size:13px;}
+</style>
+<!-- ========== モバイルファースト・デザイン上書き（後勝ちで適用） ========== -->
+<style>
+  :root{
+    --bg:#f6f1ea; --card:#ffffff; --ink:#2f2b27; --sub:#8f877c; --line:#ece5db;
+    --accent:#c9865a; --accent-d:#b5744a; --pop:#e0b483; --heart:#df5f74; --ok:#3f8f5b; --warn:#b06a3b;
+    --radius:16px; --shadow:0 2px 10px rgba(60,48,36,.06); --shadow-lg:0 10px 30px rgba(60,48,36,.14);
+    --tap:48px; --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  }
+  *{ -webkit-tap-highlight-color:transparent; }
+  html,body{ overscroll-behavior-y:none; -webkit-text-size-adjust:100%; }
+  body{ background:
+      radial-gradient(1200px 400px at 50% -120px, #fbf4ea 0, rgba(251,244,234,0) 70%), var(--bg);
+      font-size:15px; color:var(--ink); }
+
+  /* ヘッダー：セーフエリア対応・グラデ */
+  header{ padding:calc(10px + var(--sat)) 14px 10px; gap:10px;
+    background:linear-gradient(180deg,#fff, #fdf9f3); border-bottom:1px solid var(--line);
+    box-shadow:0 1px 0 rgba(0,0,0,.02); }
+  header h1{ font-size:15px; font-weight:700; letter-spacing:.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header .back{ min-width:var(--tap); min-height:38px; border-radius:10px; }
+  .badge{ min-height:32px; display:inline-flex; align-items:center; font-weight:700; }
+
+  /* フロー：横スクロールのチップ */
+  .flow{ padding:8px 14px; gap:2px; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .flow::-webkit-scrollbar{ display:none; }
+  .flow span{ padding:3px 8px; border-radius:999px; }
+  .flow span.cur{ box-shadow:0 1px 4px rgba(201,134,90,.4); }
+
+  .privacy{ padding:8px 14px; line-height:1.5; }
+
+  main{ max-width:560px; padding:14px 14px calc(28px + var(--sab)); }
+
+  /* カード */
+  .card{ border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; border-color:var(--line); }
+  h2{ font-size:14px; font-weight:700; }
+
+  /* 入力：ファイル選択をボタン風に大きく */
+  label{ font-size:12.5px; }
+  input[type=file]{ width:100%; padding:10px; border:1.5px dashed var(--line); border-radius:12px; background:#fdfbf8; font-size:12.5px; }
+  input[type=file]::file-selector-button{
+    font:inherit; border:none; background:var(--accent); color:#fff; font-weight:600;
+    padding:9px 14px; border-radius:10px; margin-right:10px; min-height:40px; cursor:pointer; }
+  input[type=text]{ min-height:44px; border-radius:12px; padding:10px 12px; font-size:15px; }
+  select{ min-height:40px; border-radius:10px; padding:6px 10px; font-size:13px; }
+
+  /* ボタン：タップしやすく */
+  button{ min-height:var(--tap); border-radius:12px; font-size:14px; font-weight:600;
+    padding:11px 16px; transition:transform .06s ease, box-shadow .15s ease, background .15s ease; }
+  button:active{ transform:scale(.98); }
+  button.primary{ background:linear-gradient(180deg,var(--accent),var(--accent-d)); border:none; box-shadow:0 3px 10px rgba(181,116,74,.28); }
+  button.primary:active{ box-shadow:0 1px 4px rgba(181,116,74,.28); }
+  /* カード内の主要ボタン・単体アクションは全幅に */
+  .card>button.primary, #buildBtn, #searchBtn, #shopFromDecide{ width:100%; margin-top:6px; }
+  .close{ min-height:40px; }
+
+  .status{ font-size:12.5px; }
+  .note{ border-radius:12px; line-height:1.55; }
+
+  /* ツールバー */
+  .toolbar{ gap:8px; position:sticky; top:0; z-index:2; }
+  #toShop{ width:auto; }
+
+  /* 俯瞰：スマホでも2×2を維持 */
+  .grid2{ grid-template-columns:repeat(2,1fr); gap:10px; }
+  @media(max-width:620px){ .grid2{ grid-template-columns:repeat(2,1fr); gap:10px; } }
+  .tile{ border-radius:14px; box-shadow:var(--shadow); }
+  .tile.pop{ box-shadow:0 0 0 2px var(--pop), var(--shadow); }
+  .tile .cap{ padding:9px 10px 11px; }
+  .tile .nm{ font-size:12px; }
+  .heart{ width:40px; height:40px; font-size:20px; box-shadow:0 2px 8px rgba(0,0,0,.16); }
+  .heart:active{ transform:scale(.9); }
+  .tag{ font-weight:700; }
+
+  /* 迷い中・比較 */
+  .shelf{ grid-template-columns:repeat(2,1fr); gap:10px; }
+  @media(min-width:520px){ .shelf{ grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); } }
+  .row button{ flex:1; min-width:120px; }
+  .chk{ transform:scale(1.5); top:10px; left:10px; }
+  .cmpbar{ gap:10px; padding:calc(10px) 12px calc(10px + var(--sab)); box-shadow:0 -4px 16px rgba(60,48,36,.08); }
+  .cmpbar button{ width:auto; }
+  .compare{ grid-template-columns:1fr 1fr; gap:10px; }
+
+  /* 楽天カード */
+  .grid{ grid-template-columns:repeat(2,1fr); gap:10px; }
+  @media(min-width:520px){ .grid{ grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; } }
+  .prod{ border-radius:14px; box-shadow:var(--shadow); }
+  .prod .body{ padding:10px; gap:5px; }
+  .buy{ min-height:44px; border-radius:10px; font-weight:600; }
+
+  /* モーダル：スマホは下からのボトムシート、PCは中央 */
+  .overlay{ align-items:flex-end; padding:0; }
+  .modal{ max-width:560px; width:100%; border-radius:22px 22px 0 0;
+    padding:20px 18px calc(20px + var(--sab)); box-shadow:var(--shadow-lg);
+    animation:sheet .22s ease-out; }
+  @keyframes sheet{ from{ transform:translateY(24px); opacity:.6; } to{ transform:translateY(0); opacity:1; } }
+  @media(min-width:560px){ .overlay{ align-items:center; padding:18px; } .modal{ border-radius:22px; } }
+  .modal h2{ font-size:17px; }
+  .gate-input{ width:150px; font-size:24px; min-height:52px; }
+  .modal button{ width:100%; }
+  .modal .close{ background:none; }
+
+  /* 決定バナー */
+  .decided{ border-radius:12px; }
+</style>
+<!-- ========== ネイティブアプリ風シェル ========== -->
+<style>
+  html{ height:100%; background:#d9d0c3; }
+  body{ height:100dvh; max-width:440px; margin:0 auto; overflow:hidden;
+    display:flex; flex-direction:column; position:relative; background:var(--bg);
+    box-shadow:0 0 50px rgba(0,0,0,.18); }
+  @media(min-width:600px){
+    html{ display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:20px 0; }
+    body{ height:min(100dvh,880px); border-radius:34px; border:11px solid #2b2723;
+      box-shadow:0 30px 80px rgba(0,0,0,.42); }
+    header{ border-radius:23px 23px 0 0; }
+  }
+  header{ position:static; }
+  .flow{ display:none; }               /* フローチップは下部タブへ置き換え */
+  .privacy{ flex:0 0 auto; }
+  main{ flex:1 1 auto; min-height:0; overflow-y:auto; max-width:none; margin:0;
+    padding:14px 14px 18px; -webkit-overflow-scrolling:touch; }
+
+  /* 下部タブバー（ネイティブ風） */
+  .tabbar{ flex:0 0 auto; display:flex; align-items:stretch;
+    background:rgba(255,255,255,.97); border-top:1px solid var(--line);
+    padding:4px 4px calc(4px + var(--sab)); }
+  .tab{ flex:1; background:none; border:none; min-height:54px; margin:0; padding:6px 2px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    font-size:10.5px; font-weight:700; color:var(--sub); position:relative; box-shadow:none; }
+  .tab:active{ transform:none; opacity:.7; }
+  .tab svg{ width:23px; height:23px; stroke:currentColor; fill:none; stroke-width:1.9;
+    stroke-linecap:round; stroke-linejoin:round; }
+  .tab.on{ color:var(--accent); }
+  .tabbadge{ position:absolute; top:6px; left:calc(50% + 6px);
+    min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:var(--heart);
+    color:#fff; font-size:10px; font-weight:700; display:none; align-items:center; justify-content:center; }
+
+  /* モーダルをアプリ幅に収める */
+  .overlay{ inset:0; left:50%; right:auto; transform:translateX(-50%); width:100%; max-width:440px; }
+
+  /* さがすタブの検索UI */
+  .connState{ font-size:11.5px; font-weight:600; padding:8px 10px; border-radius:10px; margin-bottom:10px; }
+  .connState.on{ background:#eaf5ec; color:#356b3f; border:1px solid #cfe6d2; }
+  .connState.off{ background:#fbf1e8; color:#9c6b3e; border:1px solid #f0dcc7; }
+  .filters{ display:flex; gap:8px; margin-bottom:10px; }
+  .filters .fcol{ flex:1; min-width:0; }
+  .filters .fcol select, .filters .fcol input{ width:100%; }
+  .filters label{ margin-bottom:3px; }
+  .mini{ font-size:11px; color:var(--sub); line-height:1.55; margin:6px 0; }
+  .mini-link{ display:inline-block; margin-top:4px; font-size:12px; color:var(--accent); font-weight:700; text-decoration:none; }
+  .pager{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; }
+  .pager button{ flex:0 0 auto; width:auto; }
+  .prod .shop{ font-size:10.5px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prod .rev{ font-size:10.5px; color:#c9860a; }
+
+  /* ブランド：ヘッダーのマーク */
+  .brandmark{ display:inline-flex; align-items:center; flex:0 0 auto; }
+  header h1{ font-family:Georgia,'Times New Roman',serif; }
+
+  /* 起動スプラッシュ */
+  #splash{ position:absolute; inset:0; z-index:60; background:#F4ECE1;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+    transition:opacity .55s ease; }
+  #splash.hide{ opacity:0; pointer-events:none; }
+  #splash .wm{ font-family:Georgia,'Times New Roman',serif; font-size:46px; color:#2E2A26; letter-spacing:2px; margin-top:14px; }
+  #splash .tg{ font-family:Georgia,serif; font-style:italic; font-size:15px; color:#8C8175; }
+  #splash .jp{ font-size:12px; color:#A79E92; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="splash">
+  <svg width="94" height="94" viewBox="0 0 1024 1024" style="border-radius:22px" aria-hidden="true"><clipPath id="sp"><rect width="1024" height="1024" rx="228"/></clipPath><g clip-path="url(#sp)"><rect width="1024" height="1024" fill="#F4ECE1"/><g style="mix-blend-mode:multiply"><circle cx="452" cy="452" r="176" fill="#E8623A"/><circle cx="572" cy="452" r="176" fill="#F0B23C"/><circle cx="512" cy="566" r="176" fill="#4E86A8"/></g></g></svg>
+  <div class="wm">hue</div>
+  <div class="tg">find their color</div>
+  <div class="jp">この子に映える色を、そっと。</div>
+</div>
+<header>
+  <button class="back" id="backBtn">← 戻る</button>
+  <span class="brandmark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 1024 1024" style="border-radius:7px"><clipPath id="hm"><rect width="1024" height="1024" rx="228"/></clipPath><g clip-path="url(#hm)"><rect width="1024" height="1024" fill="#F4ECE1"/><g style="mix-blend-mode:multiply"><circle cx="452" cy="452" r="176" fill="#E8623A"/><circle cx="572" cy="452" r="176" fill="#F0B23C"/><circle cx="512" cy="566" r="176" fill="#4E86A8"/></g></g></svg></span>
+  <h1 id="title">準備</h1>
+  <span class="badge" id="badge">迷い中 0</span>
+</header>
+<div class="flow" id="flow"></div>
+<div class="privacy">写真はこの端末の中だけで処理されます（保存も送信もしません）。どれが似合うかは、最後に大人の方が選びます。</div>
+
+<main>
+  <!-- 準備 -->
+  <section class="view active" id="v-setup">
+    <div class="card">
+      <h2>まず準備</h2>
+      <div class="field"><label>お子さまの写真（顔と上半身が写る正面）</label><input type="file" id="personFile" accept="image/*"></div>
+      <div class="skin"><span>肌色：</span><span class="swatch" id="skinSw"></span><span id="skinTxt">未取得</span></div>
+      <div class="field"><label>試着する服の画像（複数選択できます／お手持ちの服）※楽天画像は規約により合成しません</label><input type="file" id="garmentFiles" accept="image/*" multiple></div>
+      <button class="primary" id="buildBtn" disabled>試着して見比べる</button>
+      <div class="status" id="status">ライブラリを読み込み中…</div>
+      <div class="note">「映える色」は写真の照明で変わるため、正解ではなく傾向の目安です（原則3）。</div>
+    </div>
+  </section>
+
+  <!-- 俯瞰 -->
+  <section class="view" id="v-overview">
+    <div class="toolbar">
+      <span class="lbl">並べ替え：</span>
+      <select id="sortSel"><option value="pop">映える順の目安</option><option value="hue">色系統（色相順）</option><option value="orig">選んだ順</option></select>
+      <span class="lbl" id="ovInfo"></span>
+      <button id="toShop" style="margin-left:auto">楽天で似た服を探す →</button>
+    </div>
+    <div class="grid2" id="tiles"></div>
+    <div class="note">気になった服は♡で「迷い中」に入れておけます。枠が強調された服は、肌の色に映えやすい候補です（あくまで目安）。</div>
+  </section>
+
+  <!-- 迷い中 -->
+  <section class="view" id="v-holding">
+    <div id="holdingBody"></div>
+    <div class="cmpbar" id="cmpbar" style="display:none">
+      <span class="lbl" id="cmpLbl">2着にチェックを入れると比較できます</span>
+      <button id="compareBtn" class="primary" disabled>2着を並べてじっくり見る</button>
+    </div>
+  </section>
+
+  <!-- 2枚比較 / 決定 -->
+  <section class="view" id="v-compare">
+    <div id="decidedBanner"></div>
+    <div class="compare" id="compareBody"></div>
+    <div id="afterDecide" style="display:none;margin-top:14px">
+      <button class="primary" id="shopFromDecide">楽天で似た服を探す →</button>
+    </div>
+  </section>
+
+  <!-- 楽天で探す -->
+  <section class="view" id="v-shop">
+    <div class="card" style="margin-bottom:12px">
+      <div id="connState" class="connState off"></div>
+      <div class="field"><label>キーワード</label><input type="text" id="kw" value="キッズ Tシャツ" placeholder="例：キッズ ワンピース 女の子"></div>
+      <div class="filters">
+        <div class="fcol"><label>並び替え</label>
+          <select id="sortSelShop">
+            <option value="standard">標準（楽天おすすめ）</option>
+            <option value="-reviewCount">レビューが多い順</option>
+            <option value="-reviewAverage">評価が高い順</option>
+            <option value="+itemPrice">価格が安い順</option>
+            <option value="-itemPrice">価格が高い順</option>
+          </select>
+        </div>
+        <div class="fcol"><label>カテゴリ</label>
+          <select id="genreSel">
+            <option value="">指定なし</option>
+            <option value="100533">キッズ・ベビー・マタニティ</option>
+            <option value="__custom">ジャンルIDを入力…</option>
+          </select>
+        </div>
+      </div>
+      <div class="filters">
+        <div class="fcol"><label>最低価格(円)</label><input type="text" id="minP" inputmode="numeric" placeholder="なし"></div>
+        <div class="fcol"><label>最高価格(円)</label><input type="text" id="maxP" inputmode="numeric" placeholder="なし"></div>
+      </div>
+      <div class="field" id="genreCustomWrap" style="display:none"><label>ジャンルID（楽天ジャンル検索より）</label><input type="text" id="genreCustom" inputmode="numeric" placeholder="例：100533"></div>
+      <button class="primary" id="searchBtn">この条件で楽天を検索</button>
+      <div class="lbl" id="searchStatus" style="margin-top:8px"></div>
+      <details style="margin-top:10px">
+        <summary style="font-size:12.5px;color:var(--sub);cursor:pointer;font-weight:600">楽天と紐づける（applicationId 設定）</summary>
+        <p class="mini">楽天ウェブサービスで<strong>無料の applicationId</strong> を発行して貼ると、実データで検索できます（未設定はデモ表示）。affiliateId を入れると購入リンクがアフィリエイトになり、PR表記が有効になります。入力内容はこの端末にのみ保存されます。</p>
+        <div class="field" style="margin-top:6px"><label>applicationId</label><input type="text" id="appId" placeholder="未設定ならデモ表示"></div>
+        <div class="field"><label>affiliateId（任意）</label><input type="text" id="affId" placeholder="任意"></div>
+        <a class="mini-link" href="https://webservice.rakuten.co.jp/app/create" target="_blank" rel="noopener">applicationId を発行する（楽天ウェブサービス）↗</a>
+      </details>
+    </div>
+    <div class="grid" id="grid"><div class="empty">条件を入れて「この条件で楽天を検索」を押すと、肌の色に映える順の目安で並びます。購入は保護者ゲートを通ります。</div></div>
+    <div class="pager" id="pager" style="display:none">
+      <button id="prevPage">← 前へ</button>
+      <span class="lbl" id="pageInfo"></span>
+      <button id="nextPage">次へ →</button>
+    </div>
+  </section>
+</main>
+
+<!-- 下部タブバー（ネイティブアプリ風ナビ） -->
+<nav class="tabbar" id="tabbar">
+  <button class="tab on" data-v="setup" onclick="navTab('setup')">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.3"/><path d="M5 20c0-3.5 3.1-6.2 7-6.2s7 2.7 7 6.2"/></svg>準備</button>
+  <button class="tab" data-v="overview" onclick="navTab('overview')">
+    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg>見比べる</button>
+  <button class="tab" data-v="holding" onclick="navTab('holding')">
+    <svg viewBox="0 0 24 24"><path d="M12 20s-7-4.5-7-9.6C5 8 6.9 6.3 9 6.5c1.4.1 2.4.9 3 1.9.6-1 1.6-1.8 3-1.9 2.1-.2 4 1.5 4 3.9 0 5.1-7 9.6-7 9.6z"/></svg>迷い中<span class="tabbadge" id="tabBadge"></span></button>
+  <button class="tab" data-v="shop" onclick="navTab('shop')">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.6-3.6"/></svg>さがす</button>
+</nav>
+
+<!-- 保護者ゲート → PR → 外部遷移 -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="steps"><div class="step on" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
+    <section id="gate">
+      <h2>大人の方の操作が必要です</h2>
+      <p>お子さまが誤って進めないよう、確認をお願いします。下の計算の答えを入力してください。</p>
+      <div class="gatebox"><div class="calc" id="calc">— ＋ — ＝ ？</div><div><input class="gate-input" id="gateInput" inputmode="numeric" autocomplete="off" placeholder="こたえ"></div><div class="msg" id="gateMsg"></div></div>
+      <button class="primary" id="gateOk">確認する</button>
+      <button class="close" id="gateNew">数字を変える</button>
+      <button class="close" id="gateCancel">やめる</button>
+    </section>
+    <section id="prstep" style="display:none">
+      <h2>お進みになる前に</h2>
+      <div class="prbox"><span class="prtag">PR・広告</span>
+        <div>このリンクは<strong>アフィリエイト広告</strong>です。このリンクから購入されると、当サービスに紹介料が入ります（お支払い額は変わりません）。</div>
+        <div class="dest">遷移先： <span id="destUrl"></span></div></div>
+      <p>「開く」を押すと、外部の楽天の商品ページ（別ウィンドウ）が開きます。購入・お支払い・お客様情報の入力は、すべて遷移先で行われます。</p>
+      <button class="primary" id="openBtn">楽天の商品ページを開く</button>
+      <button class="close" id="prBack">戻る</button>
+    </section>
+    <section id="donestep" style="display:none">
+      <h2>楽天の商品ページを開きました</h2>
+      <p>別ウィンドウ／タブで開きました。開かない場合は、下からもう一度お試しください。</p>
+      <button class="primary" id="reopenBtn">もう一度開く</button>
+      <button class="close" id="doneClose">閉じる</button>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const setStatus=t=>$("status").textContent=t;
+const state={ personImg:null, poseLandmarks:null, skinLab:null, garments:[], sort:"pop", compareIds:[], chosenId:null };
+let seq=0, currentItems=[], purchaseUrl="";
+
+/* 楽天は「中継サーバー(Cloudflare Worker)」経由で呼びます。
+   ここに Worker の URL を入れると、誰が開いても入力不要で常時リアル検索になります。 */
+var RELAY_URL = "https://hue-rakuten.dahuisonglin9.workers.dev";
+/* （旧・未使用）applicationId を直接使う場合のフォールバック用 */
+var DEFAULT_APP_ID = "";
+var DEFAULT_AFF_ID = "";
+
+/* ---------- ライブラリ ---------- */
+let cvReady=false,poseReady=false,meshReady=false;
+function ready(){ if(cvReady&&poseReady&&meshReady){ setStatus("準備完了。写真と服を選んでください。"); refreshBuild(); } }
+(function waitCv(){ if(window.cv&&cv.Mat){cvReady=true;ready();return;} if(window.cv){cv["onRuntimeInitialized"]=()=>{cvReady=true;ready();};} else setTimeout(waitCv,200); })();
+let pose=null,poseResolver=null;
+(function initPose(){ if(!window.Pose){setTimeout(initPose,200);return;}
+  pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}`});
+  pose.setOptions({modelComplexity:1,smoothLandmarks:true,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+  pose.onResults(r=>{state.poseLandmarks=r.poseLandmarks||null; if(poseResolver){const x=poseResolver;poseResolver=null;x();}});
+  poseReady=true; ready();
+})();
+function detectPose(img){return new Promise(res=>{poseResolver=res;pose.send({image:img});});}
+let mesh=null,meshResolver=null;
+(function initMesh(){ if(!window.FaceMesh){setTimeout(initMesh,200);return;}
+  mesh=new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${f}`});
+  mesh.setOptions({maxNumFaces:1,refineLandmarks:false,minDetectionConfidence:0.5});
+  mesh.onResults(r=>{const lm=(r.multiFaceLandmarks&&r.multiFaceLandmarks[0])||null; if(meshResolver){const x=meshResolver;meshResolver=null;x(lm);}});
+  meshReady=true; ready();
+})();
+function detectFace(img){return new Promise(res=>{meshResolver=res;mesh.send({image:img});});}
+
+/* ---------- 色空間 ---------- */
+function srgbLin(c){c/=255;return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+function rgbToLab(r,g,b){const R=srgbLin(r),G=srgbLin(g),B=srgbLin(b);
+  let X=(R*0.4124+G*0.3576+B*0.1805)/0.95047,Y=R*0.2126+G*0.7152+B*0.0722,Z=(R*0.0193+G*0.1192+B*0.9505)/1.08883;
+  const f=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116; const fx=f(X),fy=f(Y),fz=f(Z);
+  return {L:116*fy-16,a:500*(fx-fy),b:200*(fy-fz)};}
+function lch(lab){const C=Math.hypot(lab.a,lab.b);let h=Math.atan2(lab.b,lab.a)*180/Math.PI;if(h<0)h+=360;return {L:lab.L,C,h};}
+function hueDiff(a,b){let d=Math.abs(a-b)%360;return d>180?360-d:d;}
+function popScore(skin,gar){ const s=lch(skin),g=lch(gar); const dh=hueDiff(s.h,g.h);
+  const hueS=dh<20?dh/20*0.4:Math.min(1,(dh-20)/140), lightS=Math.min(1,Math.abs(s.L-g.L)/55), chromaS=Math.min(1,g.C/60);
+  return Math.max(0,Math.min(1,0.45*hueS+0.30*lightS+0.25*chromaS)); }
+function impression(score,gar){const g=lch(gar); if(g.C<12)return "落ち着いた印象になります"; if(score>=0.66)return "肌の色によく映えます"; if(score>=0.4)return "肌になじみます"; return "やさしい印象になります";}
+function labToRgb(lab){const fy=(lab.L+16)/116,fx=fy+lab.a/500,fz=fy-lab.b/200;const g=t=>{const c=t*t*t;return c>0.008856?c:(t-16/116)/7.787;};
+  let X=g(fx)*0.95047,Y=g(fy),Z=g(fz)*1.08883; let r=X*3.2406-Y*1.5372-Z*0.4986,gg=-X*0.9689+Y*1.8758+Z*0.0415,b=X*0.0557-Y*0.2040+Z*1.0570;
+  const c=v=>{v=v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055;return Math.max(0,Math.min(255,Math.round(v*255)));}; return [c(r),c(gg),c(b)];}
+
+/* ---------- 肌色 ---------- */
+function sampleSkin(img,faceLm){
+  const W=img.naturalWidth||img.width,H=img.naturalHeight||img.height;
+  const c=document.createElement("canvas");c.width=W;c.height=H;const cx=c.getContext("2d");cx.drawImage(img,0,0,W,H);
+  const pts=[10,151,205,425,50,280,101,330],labs=[];
+  for(const idx of pts){const p=faceLm[idx];if(!p)continue;const px=Math.round(p.x*W),py=Math.round(p.y*H),rad=Math.max(2,Math.round(W*0.01));
+    for(let dy=-rad;dy<=rad;dy+=2)for(let dx=-rad;dx<=rad;dx+=2){const x=px+dx,y=py+dy;if(x<0||y<0||x>=W||y>=H)continue;
+      const d=cx.getImageData(x,y,1,1).data,lab=rgbToLab(d[0],d[1],d[2]); if(lab.L>18&&lab.L<92)labs.push(lab);}}
+  if(!labs.length)return null; const med=k=>{const a=labs.map(l=>l[k]).sort((x,y)=>x-y);return a[Math.floor(a.length/2)];};
+  return {L:med("L"),a:med("a"),b:med("b")};
+}
+function garmentColor(cut){const s=48,c=document.createElement("canvas");c.width=s;c.height=s;const cx=c.getContext("2d");cx.drawImage(cut,0,0,s,s);
+  const d=cx.getImageData(0,0,s,s).data;let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){if(d[i+3]<180)continue;R+=d[i];G+=d[i+1];B+=d[i+2];n++;}
+  if(!n)return null;return rgbToLab(R/n,G/n,B/n);}
+function dominantColor(imgEl){const s=48,c=document.createElement("canvas");c.width=s;c.height=s;const cx=c.getContext("2d");
+  try{cx.drawImage(imgEl,0,0,s,s);}catch(e){return null;} let d;try{d=cx.getImageData(Math.round(s*0.2),Math.round(s*0.2),Math.round(s*0.6),Math.round(s*0.6)).data;}catch(e){return null;}
+  let R=0,G=0,B=0,n=0;for(let i=0;i<d.length;i+=4){const r=d[i],g=d[i+1],b=d[i+2];if(r>238&&g>238&&b>238)continue;R+=r;G+=g;B+=b;n++;}
+  if(!n)return null;return rgbToLab(R/n,G/n,B/n);}
+
+/* ---------- 背景除去（道①）＋白系フォールバック検知（フェーズ5①） ---------- */
+function removeBackground(imgEl){
+  const p={V:200,S:40,kernel:5,feather:2};
+  const src=cv.imread(imgEl),rgb=new cv.Mat();cv.cvtColor(src,rgb,cv.COLOR_RGBA2RGB);
+  const hsv=new cv.Mat();cv.cvtColor(rgb,hsv,cv.COLOR_RGB2HSV);
+  const low=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[0,0,p.V,0]),high=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[180,p.S,255,0]);
+  const bg=new cv.Mat();cv.inRange(hsv,low,high,bg);const fg=new cv.Mat();cv.bitwise_not(bg,fg);
+  const k=cv.Mat.ones(p.kernel,p.kernel,cv.CV_8U);cv.morphologyEx(fg,fg,cv.MORPH_CLOSE,k);cv.morphologyEx(fg,fg,cv.MORPH_OPEN,k);
+  const contours=new cv.MatVector(),hi=new cv.Mat();cv.findContours(fg,contours,hi,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+  let mx=0,mi=-1;for(let i=0;i<contours.size();i++){const a=cv.contourArea(contours.get(i));if(a>mx){mx=a;mi=i;}}
+  const mask=cv.Mat.zeros(fg.rows,fg.cols,cv.CV_8U);let rect={x:0,y:0,width:src.cols,height:src.rows};
+  if(mi>=0){cv.drawContours(mask,contours,mi,new cv.Scalar(255),-1);rect=cv.boundingRect(contours.get(mi));}else fg.copyTo(mask);
+  const coverage = mx/(src.cols*src.rows); // フェーズ5：破綻検知用
+  if(p.feather>0){const fk=p.feather*2+1;cv.GaussianBlur(mask,mask,new cv.Size(fk,fk),0);}
+  const ch=new cv.MatVector();cv.split(src,ch);const mg=new cv.MatVector();mg.push_back(ch.get(0));mg.push_back(ch.get(1));mg.push_back(ch.get(2));mg.push_back(mask);
+  const out=new cv.Mat();cv.merge(mg,out);const full=document.createElement("canvas");full.width=src.cols;full.height=src.rows;cv.imshow(full,out);
+  const pad=4,rx=Math.max(0,rect.x-pad),ry=Math.max(0,rect.y-pad),rw=Math.min(src.cols-rx,rect.width+pad*2),rh=Math.min(src.rows-ry,rect.height+pad*2);
+  const cut=document.createElement("canvas");cut.width=rw;cut.height=rh;cut.getContext("2d").drawImage(full,rx,ry,rw,rh,0,0,rw,rh);
+  [src,rgb,hsv,low,high,bg,fg,k,hi,mask,out].forEach(m=>m.delete());contours.delete();ch.delete();mg.delete();
+  return {cut, coverage};
+}
+function renderTo(canvasEl,cut){
+  const src=state.personImg,maxW=520,sw=src.naturalWidth||src.width,sh=src.naturalHeight||src.height;
+  const sc=Math.min(1,maxW/sw),W=Math.round(sw*sc),H=Math.round(sh*sc);
+  canvasEl.width=W;canvasEl.height=H;const c=canvasEl.getContext("2d");c.clearRect(0,0,W,H);c.drawImage(src,0,0,W,H);
+  const lm=state.poseLandmarks;if(!cut||!lm)return;const L=lm[11],R=lm[12];if(!L||!R)return;
+  const lx=L.x*W,ly=L.y*H,rx=R.x*W,ry=R.y*H,midx=(lx+rx)/2,midy=(ly+ry)/2,sW=Math.hypot(lx-rx,ly-ry);if(sW<8)return;
+  const tilt=Math.atan2(ly-ry,Math.abs(lx-rx)),tw=sW*2.0,s=tw/cut.width,th=cut.height*s;
+  c.save();c.translate(midx,midy);c.rotate(tilt);c.drawImage(cut,-tw/2,-th*0.12,tw,th);c.restore();
+}
+
+/* ---------- 準備 ---------- */
+function loadImg(file){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file);});}
+let pendingGarmentFiles=[];
+function refreshBuild(){ $("buildBtn").disabled=!(cvReady&&poseReady&&meshReady&&state.personImg&&pendingGarmentFiles.length); }
+$("personFile").addEventListener("change",async e=>{ if(!e.target.files[0])return;
+  state.personImg=await loadImg(e.target.files[0]); setStatus("顔と姿勢を解析中…");
+  const faceLm=await detectFace(state.personImg); await detectPose(state.personImg);
+  if(faceLm){ state.skinLab=sampleSkin(state.personImg,faceLm);
+    if(state.skinLab){const rgb=labToRgb(state.skinLab);$("skinSw").style.background=`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;$("skinTxt").textContent="取得しました（端末内のみ）";}
+  } else $("skinTxt").textContent="お顔を読み取れませんでした（映える色は出ませんが試着は可能です）";
+  setStatus(state.poseLandmarks?"姿勢OK。服の画像を選んでください。":"お子さまがうまく写っていないようです。顔と上半身が正面の明るい写真だときれいに重なります。");
+  refreshBuild();
+});
+$("garmentFiles").addEventListener("change",e=>{ pendingGarmentFiles=[...e.target.files]; setStatus(`服を${pendingGarmentFiles.length}着選択中`); refreshBuild(); });
+$("buildBtn").addEventListener("click",async()=>{
+  setStatus("試着を作成中…"); state.garments=[];
+  for(const f of pendingGarmentFiles){ const gi=await loadImg(f); let r; try{r=removeBackground(gi);}catch(err){continue;}
+    const garLab=garmentColor(r.cut); const score=(state.skinLab&&garLab)?popScore(state.skinLab,garLab):null;
+    const light = garLab? (lch(garLab).L>82 && lch(garLab).C<14):false; // 白・淡色
+    const broken = r.coverage<0.05 || r.coverage>0.92;               // 切り抜き破綻
+    state.garments.push({id:++seq,name:f.name.replace(/\.[^.]+$/,"")||("服"+seq),cut:r.cut,garLab,score,warn:(light||broken)});
+  }
+  if(!state.garments.length){setStatus("服を切り抜けませんでした。背景が白や淡い色だと苦手です。背景が濃い色の写真だときれいに切り抜けます。");return;}
+  renderOverview(); go("overview");
+});
+
+/* ---------- ビュー遷移＋フローバー ---------- */
+const views={setup:"v-setup",overview:"v-overview",holding:"v-holding",compare:"v-compare",shop:"v-shop"};
+const titles={setup:"準備",overview:"見比べる",holding:"迷い中",compare:"2枚で比べる",shop:"楽天で探す"};
+const flowSteps=[["setup","準備"],["overview","見比べる"],["holding","迷い中"],["compare","比較・決定"],["shop","楽天で探す"]];
+function go(name){
+  Object.values(views).forEach(id=>$(id).classList.remove("active")); $(views[name]).classList.add("active");
+  $("title").textContent=titles[name]||name; $("backBtn").style.visibility=(name==="setup")?"hidden":"visible";
+  $("flow").innerHTML=flowSteps.map(([k,l])=>`<span class="${k===name?'cur':''}">${l}</span>`).join("＞");
+  window.scrollTo(0,0);
+}
+$("backBtn").addEventListener("click",()=>{
+  const cur=[...Object.entries(views)].find(([n,id])=>$(id).classList.contains("active"))[0];
+  if(cur==="shop") { renderOverview(); go("overview"); }
+  else if(cur==="compare") { renderHolding(); go("holding"); }
+  else if(cur==="holding") { renderOverview(); go("overview"); }
+  else go("setup");
+});
+$("badge").addEventListener("click",()=>{ renderHolding(); go("holding"); });
+function updateBadge(){ $("badge").textContent="迷い中 "+state.garments.filter(g=>g.held).length; }
+
+/* ---------- 俯瞰 ---------- */
+function sortedGarments(){ const arr=[...state.garments];
+  if(state.sort==="pop") arr.sort((a,b)=>(b.score??-1)-(a.score??-1));
+  else if(state.sort==="hue") arr.sort((a,b)=>((a.garLab?lch(a.garLab).h:999)-(b.garLab?lch(b.garLab).h:999)));
+  return arr;
+}
+$("sortSel").addEventListener("change",e=>{state.sort=e.target.value;renderOverview();});
+$("toShop").addEventListener("click",()=>{ go("shop"); });
+function renderOverview(){ updateBadge(); const arr=sortedGarments(),wrap=$("tiles");wrap.innerHTML=""; const popCount=Math.max(1,Math.round(arr.length*0.35));
+  arr.forEach((g,i)=>{ const isPop=state.sort==="pop"&&g.score!=null&&i<popCount&&g.score>=0.5;
+    const t=document.createElement("div");t.className="tile"+(isPop?" pop":"");
+    const cv1=document.createElement("canvas");t.appendChild(cv1);
+    const heart=document.createElement("button");heart.className="heart"+(g.held?" on":"");heart.textContent=g.held?"♥":"♡";
+    heart.onclick=()=>{g.held=!g.held;heart.className="heart"+(g.held?" on":"");heart.textContent=g.held?"♥":"♡";updateBadge();};
+    t.appendChild(heart);
+    const cap=document.createElement("div");cap.className="cap";
+    const tag=isPop?`<span class="tag">映える色</span>`:"";
+    const impr=g.score!=null?impression(g.score,g.garLab):"お顔の肌色が未取得です";
+    const warn=g.warn?`<div class="warnnote">白・淡色は切り抜きが苦手です（参考程度に）</div>`:"";
+    cap.innerHTML=`${tag}<div class="nm">${esc(g.name)}</div><div class="impr">${impr}</div>${warn}`;
+    t.appendChild(cap);wrap.appendChild(t);renderTo(cv1,g.cut);
+  });
+  $("ovInfo").textContent=`${arr.length}着・${$("sortSel").selectedOptions[0].text}`;
+}
+
+/* ---------- 迷い中 ---------- */
+function renderHolding(){ updateBadge(); state.compareIds=[]; const held=state.garments.filter(g=>g.held),body=$("holdingBody");
+  if(!held.length){ body.innerHTML=`<div class="empty">まだ迷い中の服はありません。<br>「見比べる」で♡を押すと、ここに集まります。</div>`; $("cmpbar").style.display="none"; return; }
+  body.innerHTML=`<p style="font-size:13px;color:var(--sub)">気になった服を並べました。じっくり見て、絞り込みましょう。</p>`;
+  const shelf=document.createElement("div");shelf.className="shelf";
+  held.forEach(g=>{ const card=document.createElement("div");card.className="tile";
+    const cbx=document.createElement("input");cbx.type="checkbox";cbx.className="chk";cbx.onchange=()=>toggleCompare(g.id,cbx);card.appendChild(cbx);
+    const cv1=document.createElement("canvas");card.appendChild(cv1);
+    const cap=document.createElement("div");cap.className="cap";
+    cap.innerHTML=`<div class="nm">${esc(g.name)}</div><div class="impr">${g.score!=null?impression(g.score,g.garLab):""}</div>`;
+    const row=document.createElement("div");row.className="row";
+    const b1=document.createElement("button");b1.className="primary";b1.textContent="これにする";b1.onclick=()=>decide(g.id);
+    const b2=document.createElement("button");b2.textContent="迷い中から外す";b2.onclick=()=>{g.held=false;renderHolding();};
+    row.appendChild(b1);row.appendChild(b2);cap.appendChild(row);card.appendChild(cap);shelf.appendChild(card);renderTo(cv1,g.cut);
+  });
+  body.appendChild(shelf); $("cmpbar").style.display=held.length>=2?"flex":"none"; updateCmpBar();
+}
+function toggleCompare(id,cbx){ if(cbx.checked){ if(state.compareIds.length>=2){cbx.checked=false;return;} state.compareIds.push(id);} else state.compareIds=state.compareIds.filter(x=>x!==id); updateCmpBar(); }
+function updateCmpBar(){ const n=state.compareIds.length; $("compareBtn").disabled=(n!==2); $("cmpLbl").textContent=n===2?"2着を並べて比べられます":"比べたい2着にチェックを入れてください（"+n+"/2）"; }
+$("compareBtn").addEventListener("click",()=>{ renderCompare(); go("compare"); });
+
+/* ---------- 比較・決定 ---------- */
+function renderCompare(){ $("decidedBanner").innerHTML=""; $("afterDecide").style.display="none";
+  const two=state.compareIds.map(id=>state.garments.find(g=>g.id===id)).filter(Boolean),body=$("compareBody");body.innerHTML="";
+  two.forEach(g=>{ const card=document.createElement("div");card.className="cpcard";const cv1=document.createElement("canvas");card.appendChild(cv1);
+    const cap=document.createElement("div");cap.className="cap";const b=document.createElement("button");b.className="primary";b.textContent="これにする";b.onclick=()=>decide(g.id);
+    cap.innerHTML=`<div class="nm">${esc(g.name)}</div><div class="impr">${g.score!=null?impression(g.score,g.garLab):""}</div>`;cap.appendChild(b);card.appendChild(cap);body.appendChild(card);renderTo(cv1,g.cut);
+  });
+}
+function decide(id){ const g=state.garments.find(x=>x.id===id);if(!g)return; state.chosenId=id; go("compare");
+  $("compareBody").innerHTML=""; const card=document.createElement("div");card.className="cpcard";const cv1=document.createElement("canvas");card.appendChild(cv1);
+  const cap=document.createElement("div");cap.className="cap";cap.innerHTML=`<div class="nm">${esc(g.name)}</div>`;card.appendChild(cap);$("compareBody").appendChild(card);renderTo(cv1,g.cut);
+  $("decidedBanner").innerHTML=`<div class="decided">「${esc(g.name)}」に決めました。<br>似た色・雰囲気の服を楽天で探して、大人の方の確認を経て購入できます。</div>`;
+  $("afterDecide").style.display="block";
+  $("kw").value = "キッズ "+g.name.replace(/[_\-0-9]+/g," ").trim();
+}
+$("shopFromDecide").addEventListener("click",()=>go("shop"));
+
+/* ---------- 楽天検索 ---------- */
+function swatchDataURL(hex){const c=document.createElement("canvas");c.width=c.height=120;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,120,120);x.fillStyle=hex;x.fillRect(24,18,72,84);return c.toDataURL();}
+const MOCK=[
+  {name:"キッズ 半袖Tシャツ 無地（レッド）",price:1290,img:swatchDataURL("#c0392b"),url:"https://item.rakuten.co.jp/example/red/"},
+  {name:"キッズ 半袖Tシャツ 無地（ネイビー）",price:1390,img:swatchDataURL("#22314f"),url:"https://item.rakuten.co.jp/example/navy/"},
+  {name:"キッズ 半袖Tシャツ 無地（マスタード）",price:1490,img:swatchDataURL("#d1a02a"),url:"https://item.rakuten.co.jp/example/mustard/"},
+  {name:"キッズ 半袖Tシャツ 無地（サックス）",price:1190,img:swatchDataURL("#7fb3d5"),url:"https://item.rakuten.co.jp/example/sax/"},
+  {name:"キッズ 半袖Tシャツ 無地（ホワイト）",price:1090,img:swatchDataURL("#f2f2f2"),url:"https://item.rakuten.co.jp/example/white/"},
+  {name:"キッズ 半袖Tシャツ 無地（グリーン）",price:1350,img:swatchDataURL("#3f8f5b"),url:"https://item.rakuten.co.jp/example/green/"},
+  {name:"キッズ 半袖Tシャツ 無地（ピンク）",price:1250,img:swatchDataURL("#e59ab0"),url:"https://item.rakuten.co.jp/example/pink/"},
+  {name:"キッズ 半袖Tシャツ 無地（チャコール）",price:1420,img:swatchDataURL("#3b3b3b"),url:"https://item.rakuten.co.jp/example/charcoal/"},
+];
+async function rakutenSearch(o){
+  const enc=encodeURIComponent;
+  if(RELAY_URL){
+    const qp=new URLSearchParams({keyword:o.keyword,hits:String(o.hits),page:String(o.page),sort:o.sort});
+    if(o.genreId)qp.set("genreId",o.genreId); if(o.minPrice)qp.set("minPrice",o.minPrice); if(o.maxPrice)qp.set("maxPrice",o.maxPrice);
+    let d; try{ const r=await fetch(RELAY_URL+"?"+qp.toString()); d=await r.json(); }catch(e){ throw new Error("接続できませんでした"); }
+    if(d && d.errors){ throw new Error(d.errors.errorMessage||"楽天エラー"); }
+    const items=(d.Items||[]).map(w=>{const it=w.Item||w; return {name:it.itemName,price:it.itemPrice,img:(it.mediumImageUrls&&it.mediumImageUrls[0]&&(it.mediumImageUrls[0].imageUrl||it.mediumImageUrls[0]))||"",url:it.affiliateUrl||it.itemUrl,shop:it.shopName||"",review:it.reviewCount||0,rate:it.reviewAverage||0};});
+    return {mock:false,items,count:d.count||items.length,page:d.page||o.page,pageCount:d.pageCount||1};
+  }
+  const appId=$("appId").value.trim(),affId=$("affId").value.trim();
+  if(!appId){ const items=MOCK.slice(); return {mock:true,items,count:items.length,page:1,pageCount:1}; }
+  return new Promise((res,rej)=>{ const cb="rk_"+Date.now()+"_"+Math.floor(Math.random()*1e4);
+    const timer=setTimeout(()=>{cleanup();rej(new Error("応答がありませんでした（applicationIdや通信をご確認ください）"));},12000);
+    function cleanup(){clearTimeout(timer);try{delete window[cb];}catch(e){window[cb]=undefined;}if(s.parentNode)s.remove();}
+    window[cb]=data=>{cleanup();
+      if(data && data.error){ rej(new Error(data.error_description||data.error)); return; }
+      const items=(data.Items||[]).map(w=>{const it=w.Item;return {
+        name:it.itemName, price:it.itemPrice,
+        img:(it.mediumImageUrls&&it.mediumImageUrls[0]&&(it.mediumImageUrls[0].imageUrl||it.mediumImageUrls[0]))||"",
+        url:it.affiliateUrl||it.itemUrl, shop:it.shopName||"", review:it.reviewCount||0, rate:it.reviewAverage||0 };});
+      res({mock:false,items,count:data.count||items.length,page:data.page||o.page,pageCount:data.pageCount||1});
+    };
+    const s=document.createElement("script");
+    let url="https://app.rakuten.co.jp/services/api/IchibaItem/Search/20220601?format=json"
+      +"&applicationId="+enc(appId)+"&keyword="+enc(o.keyword)+"&hits="+o.hits+"&page="+o.page
+      +"&imageFlag=1&sort="+enc(o.sort)+"&callback="+cb;
+    if(o.genreId) url+="&genreId="+enc(o.genreId);
+    if(o.minPrice) url+="&minPrice="+o.minPrice;
+    if(o.maxPrice) url+="&maxPrice="+o.maxPrice;
+    if(affId) url+="&affiliateId="+enc(affId);
+    s.onerror=()=>{cleanup();rej(new Error("楽天に接続できませんでした"));}; s.src=url; document.body.appendChild(s);
+  });
+}
+/* 検索条件を読む */
+function readShopOpts(page){
+  let genre=$("genreSel").value; if(genre==="__custom") genre=($("genreCustom").value||"").replace(/[^0-9]/g,"");
+  return { keyword:$("kw").value.trim()||"キッズ 服", sort:$("sortSelShop").value, genreId:genre,
+    minPrice:($("minP").value||"").replace(/[^0-9]/g,""), maxPrice:($("maxP").value||"").replace(/[^0-9]/g,""),
+    page:page||1, hits:28 };
+}
+const shopState={page:1,pageCount:1,count:0};
+async function runSearch(page){
+  const o=readShopOpts(page);
+  $("searchStatus").textContent="楽天を検索中…"; $("grid").innerHTML=`<div class="empty">検索中…</div>`;
+  let r; try{ r=await rakutenSearch(o); }
+  catch(e){ $("searchStatus").textContent="検索できませんでした（"+e.message+"）。条件を変えるか、少し時間をおいてお試しください。"; $("grid").innerHTML=`<div class="empty">結果を表示できませんでした。</div>`; $("pager").style.display="none"; return; }
+  shopState.page=r.page; shopState.pageCount=r.pageCount; shopState.count=r.count;
+  $("searchStatus").textContent = r.mock ? "デモ表示（applicationId 未設定）" : `楽天 ${Number(r.count).toLocaleString()}件 が見つかりました`;
+  currentItems=[];
+  for(const it of r.items){ const disp=(it.img||"").replace("128x128","300x300");
+    const el=new Image(); el.crossOrigin="anonymous";
+    const ok=await new Promise(res=>{el.onload=()=>res(true);el.onerror=()=>res(false);el.src=disp;});
+    currentItems.push(Object.assign({},it,{img:disp,imgEl:el,garLab:ok?dominantColor(el):null}));
+  }
+  renderShop();
+  const pager=$("pager");
+  if(!r.mock && r.pageCount>1){ pager.style.display="flex"; $("pageInfo").textContent=`${r.page} / ${r.pageCount} ページ`; $("prevPage").disabled=r.page<=1; $("nextPage").disabled=r.page>=r.pageCount; }
+  else pager.style.display="none";
+}
+$("searchBtn").addEventListener("click",()=>runSearch(1));
+$("kw").addEventListener("keydown",e=>{ if(e.key==="Enter") runSearch(1); });
+$("prevPage").addEventListener("click",()=>{ if(shopState.page>1) runSearch(shopState.page-1); });
+$("nextPage").addEventListener("click",()=>{ if(shopState.page<shopState.pageCount) runSearch(shopState.page+1); });
+$("genreSel").addEventListener("change",()=>{ $("genreCustomWrap").style.display = $("genreSel").value==="__custom"?"block":"none"; });
+
+function renderShop(){ if(!currentItems.length){$("grid").innerHTML=`<div class="empty">この条件では見つかりませんでした。キーワードや価格帯を変えてお試しください。</div>`;return;}
+  for(const it of currentItems){ it.score=(state.skinLab&&it.garLab)?popScore(state.skinLab,it.garLab):null; }
+  const sorted=[...currentItems].sort((a,b)=>(b.score??-1)-(a.score??-1)),grid=$("grid");grid.innerHTML="";
+  const affId=$("affId").value.trim(),popCount=Math.max(1,Math.round(sorted.length*0.35));
+  sorted.forEach((it,i)=>{ const pop=it.score!=null&&i<popCount&&it.score>=0.5;
+    const el=document.createElement("div");el.className="prod"+(pop?" pop":"");
+    const tag=it.score!=null?`<span class="tag">${pop?"映える色":"候補"}</span><div class="impr">${impression(it.score,it.garLab)}</div>`:`<div class="impr">お子さまの写真を選ぶと映える色の目安が出ます</div>`;
+    const shop=it.shop?`<div class="shop">${esc(it.shop)}</div>`:"";
+    const rev=(it.review)?`<div class="rev">★${Number(it.rate).toFixed(2)}（${Number(it.review).toLocaleString()}件）</div>`:"";
+    const pr=(RELAY_URL||affId)?`<div class="pr">PR：このリンクから購入すると当サービスに紹介料が入ります（アフィリエイト広告）。</div>`:`<div class="pr">applicationId のみで表示中。affiliateId を設定するとアフィリンク＋PR表記になります。</div>`;
+    el.innerHTML=`<img class="thumb" src="${it.img}" alt="" referrerpolicy="no-referrer"><div class="body"><div class="name">${esc(it.name)}</div>${shop}<div class="price">¥${Number(it.price).toLocaleString()}</div>${rev}${tag}<div class="foot">${pr}<button class="buy">楽天で見る（外部）</button></div></div>`;
+    el.querySelector(".buy").onclick=()=>openPurchase(it.url); grid.appendChild(el);
+  });
+}
+
+/* applicationId / affiliateId をこの端末に保存（楽天との紐づけ） */
+function updateConnState(){ const el=$("connState"); if(!el)return; const a=RELAY_URL||($("appId").value||"").trim();
+  el.className="connState "+(a?"on":"off");
+  el.textContent = a ? "● 楽天と接続済み：実データで検索します" : "○ 未接続：デモ表示中。"; }
+function saveKeys(){ try{ localStorage.setItem("kf_appId",($("appId").value||"").trim()); localStorage.setItem("kf_affId",($("affId").value||"").trim()); }catch(e){} updateConnState(); }
+function loadKeys(){ try{ const a=localStorage.getItem("kf_appId"),b=localStorage.getItem("kf_affId"); if(a)$("appId").value=a; if(b)$("affId").value=b; }catch(e){}
+  if(!$("appId").value && DEFAULT_APP_ID) $("appId").value=DEFAULT_APP_ID;
+  if(!$("affId").value && DEFAULT_AFF_ID) $("affId").value=DEFAULT_AFF_ID;
+  updateConnState(); }
+$("appId").addEventListener("change",saveKeys); $("affId").addEventListener("change",saveKeys);
+loadKeys();
+
+/* ---------- 保護者ゲート → PR → 外部遷移 ---------- */
+let gateAnswer=0,attempts=0;
+function newCalc(){ const a=12+Math.floor(Math.random()*38),b=13+Math.floor(Math.random()*37); gateAnswer=a+b; $("calc").textContent=`${a} ＋ ${b} ＝ ？`; $("gateInput").value="";$("gateMsg").textContent="";$("gateMsg").className="msg"; }
+function showStep(n){ $("gate").style.display=n===1?"block":"none";$("prstep").style.display=n===2?"block":"none";$("donestep").style.display=n===3?"block":"none";
+  $("st1").className="step"+(n>=1?" on":"");$("st2").className="step"+(n>=2?" on":"");$("st3").className="step"+(n>=3?" on":""); }
+function openPurchase(url){ purchaseUrl=url; attempts=0; newCalc(); showStep(1); $("overlay").classList.add("on"); setTimeout(()=>$("gateInput").focus(),50); }
+function closeModal(){ $("overlay").classList.remove("on"); }
+$("gateNew").addEventListener("click",newCalc);
+$("gateCancel").addEventListener("click",closeModal);
+$("gateOk").addEventListener("click",checkGate);
+$("gateInput").addEventListener("keydown",e=>{if(e.key==="Enter")checkGate();});
+function checkGate(){ const v=parseInt($("gateInput").value,10);
+  if(v===gateAnswer){ $("gateMsg").className="msg ok";$("gateMsg").textContent="確認できました。"; $("destUrl").textContent=purchaseUrl; setTimeout(()=>showStep(2),350); }
+  else { attempts++; $("gateMsg").className="msg warn"; $("gateMsg").textContent=attempts>=2?"大人の方が計算の答えを入力してください。数字は『数字を変える』で新しくできます。":"もう一度、計算の答えを入力してください。"; if(attempts>=2){const m=$("gateMsg").textContent,c=$("gateMsg").className;newCalc();$("gateMsg").textContent=m;$("gateMsg").className=c;} }
+}
+$("prBack").addEventListener("click",()=>{newCalc();showStep(1);setTimeout(()=>$("gateInput").focus(),50);});
+$("openBtn").addEventListener("click",()=>{ window.open(purchaseUrl,"_blank","noopener,noreferrer"); showStep(3); });
+$("reopenBtn").addEventListener("click",()=>window.open(purchaseUrl,"_blank","noopener,noreferrer"));
+$("doneClose").addEventListener("click",closeModal);
+
+function esc(s){var M={"&":"amp","<":"lt",">":"gt","\"":"quot","'":"#39"};return String(s).replace(/[&<>"']/g,function(c){return "&"+M[c]+";";});}
+go("setup");
+
+/* ===== 下部タブバーの配線（go/updateBadge をラップして同期） ===== */
+(function(){
+  const _go=go; go=function(n){ _go(n); syncChrome(n); };
+  const _ub=updateBadge; updateBadge=function(){ _ub(); syncBadge(); };
+  function syncBadge(){ const n=state.garments.filter(g=>g.held).length; const tb=document.getElementById("tabBadge"); if(tb){ tb.textContent=n; tb.style.display=n?"flex":"none"; } }
+  function syncChrome(n){ document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.v===n)); syncBadge(); }
+  window.navTab=function(n){
+    if(n==="overview"){ if(state.garments.length) renderOverview(); else { setStatus("先に写真と服を選んでください。"); } }
+    if(n==="holding"){ renderHolding(); }
+    go(n);
+  };
+  syncChrome("setup");
+})();
+
+/* 起動スプラッシュを数秒で閉じる */
+setTimeout(function(){ var s=document.getElementById("splash"); if(s) s.classList.add("hide"); }, 1700);
+
+/* PWA：Service Worker 登録（http/https のときのみ。file:// では何もしない） */
+if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
+  window.addEventListener("load",function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>
