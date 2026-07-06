@@ -731,7 +731,7 @@ $("openBtn").addEventListener("click",()=>{ window.open(purchaseUrl,"_blank","no
 $("reopenBtn").addEventListener("click",()=>window.open(purchaseUrl,"_blank","noopener,noreferrer"));
 $("doneClose").addEventListener("click",closeModal);
 
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
+function esc(s){var M={"&":"amp","<":"lt",">":"gt","\"":"quot","'":"#39"};return String(s).replace(/[&<>"']/g,function(c){return "&"+M[c]+";";});}
 go("setup");
 
 /* ===== 下部タブバーの配線（go/updateBadge をラップして同期） ===== */
@@ -739,4 +739,22 @@ go("setup");
   const _go=go; go=function(n){ _go(n); syncChrome(n); };
   const _ub=updateBadge; updateBadge=function(){ _ub(); syncBadge(); };
   function syncBadge(){ const n=state.garments.filter(g=>g.held).length; const tb=document.getElementById("tabBadge"); if(tb){ tb.textContent=n; tb.style.display=n?"flex":"none"; } }
-  function syncChrome(n){
+  function syncChrome(n){ document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.v===n)); syncBadge(); }
+  window.navTab=function(n){
+    if(n==="overview"){ if(state.garments.length) renderOverview(); else { setStatus("先に写真と服を選んでください。"); } }
+    if(n==="holding"){ renderHolding(); }
+    go(n);
+  };
+  syncChrome("setup");
+})();
+
+/* 起動スプラッシュを数秒で閉じる */
+setTimeout(function(){ var s=document.getElementById("splash"); if(s) s.classList.add("hide"); }, 1700);
+
+/* PWA：Service Worker 登録（http/https のときのみ。file:// では何もしない） */
+if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
+  window.addEventListener("load",function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
+}
+</script>
+</body>
+</html>
