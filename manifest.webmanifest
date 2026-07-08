@@ -1,0 +1,18 @@
+{
+  "name": "hue — この子に映える色を",
+  "short_name": "hue",
+  "description": "子供服が似合うか（色・雰囲気）を写真で確かめ、映える色をそっと提案するアプリ。写真は端末内でのみ処理します。",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4ECE1",
+  "theme_color": "#F4ECE1",
+  "icons": [
+    { "src": "hue_icon_192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "hue_icon_512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "hue_icon_512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
